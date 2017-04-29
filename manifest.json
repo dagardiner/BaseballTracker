@@ -1,0 +1,31 @@
+{
+  "manifest_version": 2,
+  "name": "MLB Baseball Tracker",
+  "short_name": "MlbBaseballTracker",
+  "version": "1.8",
+  "description": "Adds an icon with your selected MLB team's game information with real-time score and in-game data.",
+  "offline_enabled": false,
+  
+  "background": {
+    "scripts": ["jquery-1.10.2.js","moment.min.js","moment-timezone-with-data.min.js","background.js"]
+  },
+  
+  "permissions": [
+    "alarms",
+    "storage",
+    "contextMenus",
+    "webRequest"
+   ],
+ 
+  "web_accessible_resources": [
+    "logo/*"
+  ],
+
+  "browser_action": {
+    "default_icon": "logos/mlb.png"
+  },
+
+  "icons": {
+      "128": "logos/mlb.png"
+  }
+}
