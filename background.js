@@ -1,22 +1,28 @@
 var teams = [ "Angels","Astros","Athletics","Blue Jays","Braves","Brewers","Cardinals","Cubs","D-backs","Dodgers","Giants","Indians","Mariners","Marlins","Mets","Nationals","Orioles","Padres","Phillies","Pirates","Rangers","Rays","Red Sox","Reds","Rockies","Royals","Tigers","Twins","White Sox","Yankees" ];
 var teamMenuItems = [];
+var numbers = [];
+var icons = [];
 
 var teamName = "Cubs";
 var timezone = "US/Central";
-var teamIcon = "logos/Cubs.png";
-var winIcon = "logos/win.png";
-var lossIcon = "logos/loss.png";
 var iconCanvas = document.createElement('canvas');
+var apiBaseUrl = "https://statsapi.mlb.com";
+var simpleGameViewModeEnabled = false;
 
-var currentlyPreGame = true;
 var currentGameId = false;
+var currentGame = false;
+var currentPitcher = false;
+var currentBatter = false;
 
-var gameCompleteIconSet = "20000101";
+var gametimeDataRefreshPreGameInterval = 120000;
+var gametimeDataRefreshInGameInterval = 30000;
+var gametimeDataRefreshCurrentInterval = 0;
 var gametimeDataRefreshTimer = false;
 
+// Startup and event handlers
 chrome.alarms.create("GameUpdater", {
 	when: Date.now() + 3000,
-	periodInMinutes: 60
+	periodInMinutes: 40 //games flip from Scheduled to Pre-Game 40 minutes before first pitch
 });
 chrome.alarms.onAlarm.addListener(function(alarm) {
 	if(alarm.name="GameUpdater") {
@@ -25,29 +31,54 @@ chrome.alarms.onAlarm.addListener(function(alarm) {
 });
 chrome.browserAction.onClicked.addListener(function() {
 	if(currentGameId) {
-		if(currentlyPreGame) {
-		    chrome.tabs.create({ url: "http://www.mlb.com/r/game?mode=preview&sport_code=mlb&gid=" + currentGameId });
-		} else {
-			//redirects to mode gameday as appropriate
-		    chrome.tabs.create({ url: "http://www.mlb.com/r/game?mode=box&sport_code=mlb&gid=" + currentGameId });
-		}
+	    chrome.tabs.create({ url: "https://www.mlb.com/gameday/" + currentGameId });
 	} else {
-	    chrome.tabs.create({url: "http://m.mlb.com/scoreboard/"});
+	    chrome.tabs.create({url: "https://www.mlb.com/scores"});
 	}
 });
-chrome.storage.sync.get([ 'sportsTrackerTeamName','sportsTrackerTimeZone' ], function (result) {
-  if(result.sportsTrackerTeamName) {
+
+// Startup and menu population
+chrome.storage.sync.get([ 'sportsTrackerTeamName','sportsTrackerTimeZone','sportsTrackerSimpleGameViewModeEnabled' ], function (result) {
+	loadLogos();
+	loadNumbers();
+
+	if(result.sportsTrackerTeamName) {
 		teamName = result.sportsTrackerTeamName;
-		//console.log(teamName);
-		teamIcon = "logos/" + result.sportsTrackerTeamName + ".png"
 	}
 	addTeamSelectorMenuOptions();
+
+	if(result.sportsTrackerSimpleGameViewModeEnabled) {
+		simpleGameViewModeEnabled = result.sportsTrackerSimpleGameViewModeEnabled;
+	}
+	addSimpleGameViewModeEnabledMenuOption();
 	
 	if(result.sportsTrackerTimeZone) {
 		timezone = result.sportsTrackerTimeZone;
 	}
-  addTimeZoneMenuOptions();
+	addTimeZoneMenuOptions();
 });
+function loadNumbers() {
+	for(var i = 1; i <= 9; i++) {
+		numbers[i] = new Image();
+		numbers[i].src = "numbers/" + i + ".png";
+	}
+	var plus = new Image();
+	plus.src = "numbers/+.png";
+	for(var i = 10; i <= 10; i++) {
+		numbers[i] = plus;
+	}
+}
+function loadLogos() {
+	teams.forEach(function(teamName) {
+		icons[teamName] = new Image();
+		icons[teamName].src = "logos/" + teamName + ".png";
+	});
+	icons["win"] = new Image();
+	icons["win"].src = "logos/win.png";
+
+	icons["loss"] = new Image();
+	icons["loss"].src = "logos/loss.png";
+}
 function addTeamSelectorMenuOptions() {
   var selectTeamMenuItem = chrome.contextMenus.create({
 		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
@@ -56,7 +87,6 @@ function addTeamSelectorMenuOptions() {
 	});
   for (var i = 0, len = teams.length; i < len; i++) {
     var team = teams[i];
-    //console.log("Adding team " + team + " index " + i);
     var menuIndex = chrome.contextMenus.create({
       "documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
       "type":"radio",
@@ -73,17 +103,32 @@ function addTeamSelectorMenuOptions() {
 			console.log("error creating menu item:" + chrome.runtime.lastError);
 		}
 	});
-	//console.log("Menu index is " + menuIndex);
     teamMenuItems[menuIndex] = team;
   }
 }
 function saveSelectedTeam(newTeam) {
-  //console.log(newTeam);
   teamName = newTeam;
-  teamIcon = "logos/" + newTeam + ".png"
   chrome.storage.sync.set({'sportsTrackerTeamName': newTeam });
-	//console.log("Team updated to " + newTeam);
 	updateData();
+}
+function addSimpleGameViewModeEnabledMenuOption() {
+	chrome.contextMenus.create({
+		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
+		"type":"separator"
+	});
+
+	chrome.contextMenus.create({
+		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
+		"type":"checkbox",
+		"checked":simpleGameViewModeEnabled,
+		"title":"Enable Simplified In-Game View",
+		"contexts":["browser_action"],
+		"onclick":function(info, tab) {
+			simpleGameViewModeEnabled = info.checked;
+			chrome.storage.sync.set({'sportsTrackerSimpleGameViewModeEnabled': simpleGameViewModeEnabled });
+			updateData();
+		}
+	});
 }
 function addTimeZoneMenuOptions() {
 	chrome.contextMenus.create({
@@ -135,10 +180,10 @@ function addTimeZoneMenuOptions() {
 function saveTimeZone(newzone) {
 	timezone = newzone;
 	chrome.storage.sync.set({'sportsTrackerTimeZone': newzone });
-	//console.log("Timezone updated to " + newzone);
 	updateData();
 }
 
+// Game data update request logic
 function updateData() {
 	var today = new Date();
 	var dd = today.getDate();
@@ -152,225 +197,409 @@ function updateData() {
 	}
 	updateGameData(yyyy, mm, dd);
 }
-
 function updateGameData(yyyy, mm, dd) {
-	//http://riccomini.name/posts/game-time-baby/2012-09-29-streaming-live-sports-schedule-scores-stats-api/
 	var xmlHttp = new XMLHttpRequest();
-	xmlHttp.open("GET", "http://gd2.mlb.com/components/game/mlb/year_" + yyyy + "/month_" + mm + "/day_" + dd + "/master_scoreboard.json", true); // false for synchronous 
-	xmlHttp.send(null);
+	var dateString = yyyy + "-" + mm + "-" + dd;
+	var scoreboardUrl = apiBaseUrl + "/api/v1/schedule?sportId=1&date=" + dateString + "&hydrate=linescore(runners),probablePitcher,team&language=en";
+	xmlHttp.open("GET", scoreboardUrl, true); // false for synchronous 
 	xmlHttp.onreadystatechange = function() {
 		if (xmlHttp.readyState == 4 && xmlHttp.status == 200) {
-			var gameInfo = JSON.parse(xmlHttp.responseText);
-			var games;
+			var gameInfo = JSON.parse(xmlHttp.responseText).dates[0].games;
+			var myGames;
 
-			if(gameInfo.data.games.game) {
-				games = $.grep(gameInfo.data.games.game, function(game){ 
-					return ( game.home_team_name == teamName || game.away_team_name == teamName ) && game.original_date == (yyyy + "/" + mm + "/" + dd) ; 
+			if(gameInfo) {
+				myGames = $.grep(gameInfo, function(game){ 
+					return ( game.teams.home.team.teamName == teamName || game.teams.away.team.teamName == teamName ) && game.gameDate.includes(dateString); 
 				});
 			}
 
-			//If there's only one game, game is an object rather than an array, and grep fails
-			if(games && games.length == 0 && (gameInfo.data.games.game.home_team_name == teamName || gameInfo.data.games.game.away_team_name == teamName ) && gameInfo.data.games.game.original_date == (yyyy + "/" + mm + "/" + dd)) {
-				games[0] = gameInfo.data.games.game;
-			}
-
-			var tagText = "No " + teamName + " game today";
-			var badgeText = "";
-			var icon = teamIcon;
-			var gameToday = false;
-
-			if(games && games.length > 0) {
-				gameToday = true;
-				//TODO: support if we get more than one game (ie if there's a double-header)
-				game = games[0];
-				//console.log(game);
-				var myScore = 0;
-				var otherScore = 0;
-				var otherName = "other guys";
-				var gameTime = "game time";
-				var gameTimeZone = "CT"; // CT, ET, MST, PT
-				var pitcher = { name_display_roster: "the pitcher" };
-				var venue = game.venue;
-				currentGameId = game.id.replace("/", "_").replace("/", "_").replace("/", "_").replace("-", "_").replace("-", "_");
-				console.log("Selecting game ID " + currentGameId);
-
-				if(game.home_team_name == teamName) {
-					if(game.linescore) {
-						myScore = game.linescore.r.home;
-						otherScore = game.linescore.r.away;
-					}
-					otherName = game.away_team_name;
-					gameTime = game.home_time;
-					gameTimeZone = game.home_time_zone;
-					pitcher = game.home_probable_pitcher;
-				} else if (game.away_team_name == teamName) {
-					if(game.linescore) {
-						myScore = game.linescore.r.away;
-						otherScore = game.linescore.r.home;
-					}
-					otherName = game.home_team_name;
-					gameTime = game.away_time;
-					gameTimeZone = game.away_time_zone;
-					pitcher = game.away_probable_pitcher;
-				}
-
-				if(pitcher == null) {
-					pitcher = game.pitcher
-				}
-
-				if(game.status.status == "Preview") {
-					var localGameTime = getTzAdjustedTime(yyyy, mm, dd, gameTime, gameTimeZone);
-					tagText = teamName + " vs " + otherName + " at " + venue + " will start at " + localGameTime + " " + moment.tz(timezone).format('z') + " with " + pitcher.name_display_roster + " pitching";
-					badgeText = localGameTime;
-					currentlyPreGame = true;
-					//gameCompleteIconSet = "20000101"; //in case we haven't reset the icon when the day rolls over
-				} else if(game.status.status == "Postponed" || game.status.status == "Delayed Start") {
-					//reason:"Inclement Weather"
-					//note:"(inclement weather)  with 0 out in the top of the 1st and a 0-0 count on Logan Forsythe."
-					if(game.status.reason)
-						tagText = teamName + " vs " + otherName + " at " + venue + " is postponed because of " + game.status.reason;
-					else
-						tagText = teamName + " vs " + otherName + " at " + venue + " is postponed";
-					badgeText = "PPD";
-
-					startInGameDataUpdateTimerIfNeeded();
-					currentlyPreGame = true;
-					//gameCompleteIconSet = "20000101"; //in case we haven't reset the icon when the day rolls over
-				} else if (game.status.status == "Pre-Game" || game.status.status == "Warmup"){
-					var localGameTime = getTzAdjustedTime(yyyy, mm, dd, gameTime, gameTimeZone);
-					tagText = teamName + " vs " + otherName + " at " + venue + " will start shortly at " + localGameTime + " " + moment.tz(timezone).format('z') + " with " + pitcher.name_display_roster + " pitching";
-					badgeText = localGameTime;
-
-					startInGameDataUpdateTimerIfNeeded();
-					currentlyPreGame = true;
-				} else if(game.status.status == "Final" || game.status.status == "Game Over") {
-					var gameResult;
-					if(Number(myScore) > Number(otherScore)) {
-						scoreStatus = "beat";
-						icon = winIcon;
-						gameCompleteIconSet = (yyyy + mm + dd);
-						console.log("Set game win icon at " + gameCompleteIconSet)
-					} else if(Number(myScore) < Number(otherScore)) {
-						scoreStatus = "lost to";
-						icon = lossIcon;
-						gameCompleteIconSet = (yyyy + mm + dd);
-					} else if(myScore == otherScore) {
-						scoreStatus = "tied";
-					}
-
-					tagText = "The " + teamName + " " + scoreStatus + " the " + otherName + " " + myScore + "-" + otherScore + " at " + venue;
-					badgeText = myScore + "-" + otherScore;
-
-					if(gametimeDataRefreshTimer) {
-						//console.log("Clearing data refresh interval for a completed game");
-						window.clearInterval(gametimeDataRefreshTimer);
-						gametimeDataRefreshTimer = false;
-					}
-					currentlyPreGame = false;
-				} else if(game.status.status == "In Progress" || game.status.status == "Manager Challenge") {
-					var scoreStatus;
-					if(Number(myScore) > Number(otherScore)) {
-						scoreStatus = "leading";
-					} else if(Number(myScore) < Number(otherScore)) {
-						scoreStatus = "trailing";
-					} else if(Number(myScore) == Number(otherScore)) {
-						scoreStatus = "tied with";
-					}
-
-					var inningString = game.status.inning;
-					if (inningString == 1) {
-						inningString += "st";
-					} else if (inningString == 2) {
-						inningString += "nd";
-					} else if (inningString == 3) {
-						inningString += "rd";
-					} else {
-						inningString += "th";
-					}
-
-					tagText = "The " + teamName + " are " + scoreStatus + " the " + otherName + " " + myScore + "-" + otherScore + " in the " + game.status.inning_state.toLowerCase() + " of the " + inningString + " with " + pitcher.name_display_roster + " pitching at " + venue + " (updated " + (new Date()).toLocaleTimeString() + ")";
-					badgeText = myScore + "-" + otherScore;
-
-					startInGameDataUpdateTimerIfNeeded();
-					currentlyPreGame = false;
-				} else {
-					console.log("Unknown game status of " + game.status.status);
-					tagText = false; //if it's an unknown state, don't change anything - this is a bug
-					badgeText = false;
-				}
+			if(myGames && myGames.length > 0) {
+				currentGame = myGames[0];
+				if(myGames.length > 1 && myGames[0].status.detailedState == "Final")
+					currentGame = myGames[1];
 			} else {
-				tagText = "No " + teamName + " game today";
-				badgeText = "";
-				gameToday = false;
-				currentGameId = false;
+				currentGame = false;
 			}
 
-			if(tagText) {
-				chrome.browserAction.setTitle({title: tagText });
-			}
-			if(badgeText !== false) {
-				chrome.browserAction.setBadgeText({text: badgeText});
-			}
-			drawLogo(icon, gameToday);
+			if(currentGame && currentGame.status.abstractGameState == "Live")
+				updateGameMatchupData(apiBaseUrl + currentGame.link);
+
+			updateDisplay();
 		}
 	}
+	xmlHttp.send(null);
+}
+function updateGameMatchupData(gameUrl) {
+	var gameDetailRequest = new XMLHttpRequest();
+	gameDetailRequest.open("GET", gameUrl, true); // false for synchronous 
+	gameDetailRequest.onreadystatechange = function() {
+		if(gameDetailRequest.readyState == 4 && gameDetailRequest.status == 200) {
+			var data = JSON.parse(gameDetailRequest.responseText);
+			var currentMatchup = data.liveData.plays.currentPlay.matchup;
+
+			var pitcherUrl = apiBaseUrl + "/api/v1/people/" + currentMatchup.pitcher;
+			var pitcherDetailRequest = new XMLHttpRequest();
+			pitcherDetailRequest.open("GET", pitcherUrl , true); // false for synchronous 
+			pitcherDetailRequest.onreadystatechange = function() {
+				if(pitcherDetailRequest.readyState == 4 && pitcherDetailRequest.status == 200) {
+					currentPitcher = JSON.parse(pitcherDetailRequest.responseText).people[0];
+					updateDisplay();
+				}
+			}
+			pitcherDetailRequest.send(null);
+
+			var batterUrl = apiBaseUrl + "/api/v1/people/" + currentMatchup.batter;
+			var batterDetailRequest = new XMLHttpRequest();
+			batterDetailRequest.open("GET", batterUrl , true); // false for synchronous 
+			batterDetailRequest.onreadystatechange = function() {
+				if(batterDetailRequest.readyState == 4 && batterDetailRequest.status == 200) {
+					currentBatter = JSON.parse(batterDetailRequest.responseText).people[0];
+					updateDisplay();
+				}
+			}
+			batterDetailRequest.send(null);
+		}
+	}
+	gameDetailRequest.send(null);
+}
+function startPreGameDataUpdateTimerIfNeeded() {
+	if(gametimeDataRefreshCurrentInterval != gametimeDataRefreshPreGameInterval)
+		stopGameTimers();
+
+	if(gametimeDataRefreshTimer == false)
+		gametimeDataRefreshTimer = setInterval(updateData, gametimeDataRefreshPreGameInterval);
 }
 function startInGameDataUpdateTimerIfNeeded() {
+	if(gametimeDataRefreshCurrentInterval != gametimeDataRefreshInGameInterval)
+		stopGameTimers();
+	
 	if(gametimeDataRefreshTimer == false) {
-		//console.log("Setting data refresh interval for an active game");
-		gametimeDataRefreshTimer = setInterval(updateData, 120000); //2 minutes
+		gametimeDataRefreshTimer = setInterval(updateData, gametimeDataRefreshInGameInterval);
 	}
 }
-function getTzAdjustedTime(yyyy, mm, dd, time, fromTimezone) {
-	var fromTzString = "US/Central";
-	if(fromTimezone.startsWith("C")) {
-		fromTzString = "US/Central";
-	} else if (fromTimezone.startsWith("E")) {
-		fromTzString = "US/Eastern";
-	} else if (fromTimezone.startsWith("P")) {
-		fromTzString = "US/Pacific";
-	} else if (fromTimezone.startsWith("M")) {
-		fromTzString = "US/Mountain";
+function stopGameTimers() {
+	if(gametimeDataRefreshTimer) {
+		window.clearInterval(gametimeDataRefreshTimer);
+		gametimeDataRefreshTimer = false;
+	}
+}
+
+// UI update logic
+function updateDisplay() {
+	var tagText = false;
+	var badgeText = "";
+	var icon = icons[teamName];
+	var gameDataForIcon = false;
+
+	if(currentGame) {
+		var game = currentGame;
+		currentGameId = game.gamePk;
+
+		var myScore = 0;
+		var otherScore = 0;
+		var otherName = "other guys";
+		var probablePitcher = "the pitcher";
+		var venue = game.venue.name;
+		var venueHomeAway = "at the ballpark";
+
+		if(game.teams.home.team.teamName == teamName) {
+			if(game.linescore) {
+				myScore = game.linescore.teams.home.runs;
+				otherScore = game.linescore.teams.away.runs;
+			}
+			otherName = game.teams.away.team.teamName;
+			if(game.teams.home.probablePitcher)
+				probablePitcher = game.teams.home.probablePitcher.fullName;
+			venueHomeAway = "at home";
+		} else if (game.teams.away.team.teamName == teamName) {
+			if(game.linescore) {
+				myScore = game.linescore.teams.away.runs;
+				otherScore = game.linescore.teams.home.runs;
+			}
+			otherName = game.teams.home.team.teamName;
+			if(game.teams.away.probablePitcher)
+				probablePitcher = game.teams.away.probablePitcher.fullName;
+			venueHomeAway = "away";
+		}
+
+		//States
+		// Preview - Scheduled
+		// Preview - Pre-Game
+		// Live - Warmup
+		// Live - In Progress
+		// Final - Game Over
+		// Final - Final
+
+		switch(game.status.detailedState) {
+			case "Scheduled":
+				var localGameTime = getTzAdjustedTime(game.gameDate);
+				tagText = teamName + " vs " + otherName + " at " + venue + " will start at " + localGameTime + " " + moment.tz(timezone).format('z') + " with " + probablePitcher + " pitching";
+				badgeText = localGameTime;
+				stopGameTimers();
+				break;
+			case "Postponed": //Theoretical - not yet seen
+			case "Delayed Start": //Theoretical - not yet seen
+				console.log(game); //So I can tell what's available for this object when it occurs
+				if(game.status.detailedState != game.status.abstractGameState)
+					tagText = teamName + " vs " + otherName + " at " + venue + " is postponed because of " + game.status.detailedState;
+				else
+					tagText = teamName + " vs " + otherName + " at " + venue + " is postponed";
+				badgeText = "PPD";
+
+				startPreGameDataUpdateTimerIfNeeded();
+				break;
+			case "Pre-Game":
+			case "Warmup":
+				var localGameTime = getTzAdjustedTime(game.gameDate);
+				tagText = teamName + " vs " + otherName + " at " + venue + " will start shortly (" + localGameTime + " " + moment.tz(timezone).format('z') + ") with " + probablePitcher + " pitching";
+				badgeText = localGameTime;
+
+				startPreGameDataUpdateTimerIfNeeded();
+				break;
+			case "In Progress":
+			case "Manager Challenge": //Theoretical - not yet seen
+				var scoreStatus;
+				if(Number(myScore) > Number(otherScore)) {
+					scoreStatus = "leading";
+				} else if(Number(myScore) < Number(otherScore)) {
+					scoreStatus = "trailing";
+				} else if(Number(myScore) == Number(otherScore)) {
+					scoreStatus = "tied with";
+				}
+
+				var inningString = game.linescore.currentInningOrdinal;
+				var inninghalf = game.linescore.inningState.toLowerCase();
+				var currentInningHalfTeam = ((game.teams.away.team.teamName == teamName) && game.linescore.isTopInning) ? teamName : otherName
+				var balls = game.linescore.balls;
+				var strikes = game.linescore.strikes;
+				var outs = game.linescore.outs;
+
+				var bases = "nobody on base";
+				var basesLoaded = Object.getOwnPropertyNames(game.linescore.offense);
+				if(basesLoaded.length > 0) {
+					bases = "runners on ";
+					bases += basesLoaded.join(", ").split('').reverse().join('').replace(',','dna ').split('').reverse().join('').replace("first", "1st").replace("second", "2nd").replace("third", "3rd");
+				}
+
+				var pitcherBlurb = "";
+				if(currentPitcher) {
+					pitcherBlurb = " with " + currentPitcher.fullName + " pitching";
+					if(currentBatter)
+						pitcherBlurb += " to " + currentBatter.fullName;
+				}
+
+				tagText = teamName + " are " +  venueHomeAway + ", " + scoreStatus + " the " + otherName + " " + myScore + "-" + otherScore + " in the " + inninghalf + " of the " + inningString + pitcherBlurb + ". "
+							+ currentInningHalfTeam + " have " + bases + " with " + balls + " ball" + sip(balls) + ", " + strikes + " strike" + sip(strikes) + ", and " + outs + " out" + sip(outs)
+							 + " (" + (new Date()).toLocaleTimeString() + ")";
+				badgeText = myScore + "-" + otherScore;
+
+				gameDataForIcon = { 
+					inning: game.linescore.currentInning,
+					isTop: game.linescore.isTopInning, 
+					isMiddle: (inninghalf == "middle" || inninghalf == "end"), 
+					outs: game.linescore.outs, 
+					firstBase: game.linescore.offense.first, 
+					secondBase: game.linescore.offense.second, 
+					thirdBase: game.linescore.offense.third 
+				};
+
+				startInGameDataUpdateTimerIfNeeded();
+				break;
+			case "Final":
+			case "Game Over":
+				var gameResult;
+				if(Number(myScore) > Number(otherScore)) {
+					scoreStatus = "beat";
+					icon = icons["win"];
+				} else if(Number(myScore) < Number(otherScore)) {
+					scoreStatus = "lost to";
+					icon = icons["loss"];
+				} else if(myScore == otherScore) {
+					scoreStatus = "tied";
+				}
+
+				tagText = "The " + teamName + " " + scoreStatus + " the " + otherName + " " + myScore + "-" + otherScore + " at " + venue;
+				badgeText = myScore + "-" + otherScore;
+
+				stopGameTimers();
+				currentPitcher = false;
+				currentBatter = false;
+				break;
+			default:
+				console.log("Unknown Game State to handle: " + game.status.abstractGameState + ", detailed state " + game.detailedState)
+				tagText = false; //if it's an unknown state, don't change anything - this is a bug
+				badgeText = false;
+				break;
+		}
 	} else {
-		console.log("Unknown time zone for selected team game time: " + fromTimezone);
+		tagText = "No " + teamName + " game today";
+		badgeText = "";
+		currentGameId = false;
+		stopGameTimers();
 	}
 
-	if(time.split(':')[0].length == 1) {
-		time = "0" + time;
-	}
-	var centralTime = moment.tz(yyyy + "-" + mm + "-" + dd + " " + time + ":00PM", fromTzString);
-	var localTime = centralTime.tz(timezone).format('hh:mm'); //HH:mm
+	if(tagText)
+		chrome.browserAction.setTitle({title: tagText });
+
+	if(badgeText !== false)
+		chrome.browserAction.setBadgeText({text: badgeText});
+
+	drawIcon(icon, currentGame, gameDataForIcon);
+}
+function getTzAdjustedTime(utcTimeString) {
+	var localTime = moment.tz(utcTimeString, "UTC").tz(timezone).format('hh:mm');
 	if(localTime[0] == '0')
 		localTime = localTime.substring(1);
 	return localTime;
 }
-function drawLogo(logoSource, useColorImage) {
+function sip(number) {
+	//Returns "s" if the number requires the label to be plural
+	if(number == 1)
+		return "";
+	return "s";
+}
+
+// Logo draw logic
+function drawIcon(icon, useColorImage, gameData) {
 	var context = iconCanvas.getContext('2d');
 
-	var bgImage = new Image();
-	bgImage.onload = function() {
-    context.clearRect(0, 0, bgImage.height, bgImage.width);
-		context.drawImage(bgImage, 0, 0);
-		var imageData = context.getImageData(0, 0, 128, 128);
-		
-		if(!useColorImage) {
-      for(var y = 0; y < imageData.height; y++){
-       for(var x = 0; x < imageData.width; x++){
-          var i = (y * 4) * imageData.width + x * 4;
-          var avg = (imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3;
-          imageData.data[i] = avg;
-          imageData.data[i + 1] = avg;
-          imageData.data[i + 2] = avg;
-          if(avg > 0) {
-            imageData.data[i + 3] = 100;
-          }
-        }
-      }
-    }
+	if(gameData && !simpleGameViewModeEnabled) {
+		context.clearRect(0, 0, 19, 19);
+
+    	if(!gameData.isMiddle) {
+			if(gameData.outs >= 1) 
+				drawOut(context, 1);
+			if(gameData.outs >= 2) 
+				drawOut(context, 2);
+			if(gameData.outs >= 3) 
+				drawOut(context, 3);
+
+	    	drawInningIndicator(context, gameData.isTop);
+		}
+
+		drawInningNumber(context, gameData.inning, !gameData.isMiddle && gameData.outs >= 1);
+
+		drawBase(context, 13, 4, gameData.firstBase);
+		drawBase(context, 9, 0, gameData.secondBase);
+		drawBase(context, 5, 4, gameData.thirdBase);
+
+		var imageData = getImageDataFromContext(context, 19, !useColorImage);
     
-    chrome.browserAction.setIcon({
+    	chrome.browserAction.setIcon({
 		  imageData: imageData
 		});
-	};
-	bgImage.src = logoSource;
+    } else {
+    	context.clearRect(0, 0, icon.height, icon.width);
+		context.drawImage(icon, 0, 0);
+
+		var imageData = getImageDataFromContext(context, icon.height, !useColorImage);
+
+    	chrome.browserAction.setIcon({
+		  imageData: imageData
+		});
+	}
+}
+function drawInningIndicator(context, isTop) {
+	if(isTop) {
+		context.moveTo(0, 0);
+		context.beginPath();
+		context.lineTo(0, 4);
+		context.lineTo(4, 0);
+		context.lineTo(0, 0);
+	} else {
+		context.moveTo(0, 19);
+		context.beginPath();
+		context.lineTo(0, 15);
+		context.lineTo(4, 19);
+		context.lineTo(0, 19);
+	}
+
+	context.lineWidth = 1;
+	context.strokeStyle = "#000";
+	context.stroke();
+	context.closePath();
+	context.fillStyle = "#000";
+	context.fill();
+}
+function drawInningNumber(context, inningNumber, setWhiteText) {
+	context.drawImage(numbers[inningNumber], 15, 1);
+	if(setWhiteText) {
+		var imageData = context.getImageData(0, 0, 19, 19);
+		for(var y = 1; y <= 5; y++){
+			for(var x = 15; x < 19; x++){
+				var i = (y * 4) * imageData.width + x * 4;
+				var colorSum = (imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]);
+				if(colorSum == 0) {
+					imageData.data[i] = 255;
+					imageData.data[i + 1] = 255;
+					imageData.data[i + 2] = 255;
+					imageData.data[i + 3] = 255;
+				}
+			}
+		}
+		context.putImageData(imageData, 0, 0);
+	}
+}
+function drawBase(context, startX, startY, baseLoaded) {
+	var radius = 4;
+	context.moveTo(startX, startY);
+	context.beginPath();
+	context.lineTo(startX + radius, startY + radius);
+	context.lineTo(startX, startY + radius + radius);
+	context.lineTo(startX - radius, startY + radius);
+	context.lineTo(startX, startY);
+	context.lineWidth = 1;
+	context.strokeStyle = "#000";
+	context.stroke();
+	context.closePath();
+	context.fillStyle = baseLoaded ? "#090" : "#CCA";
+	context.fill();
+}
+function drawOut(context, outNumber) {
+	if(outNumber == 1) {
+		context.moveTo(19, 0);
+		context.beginPath();
+		context.lineTo(19, 10);
+		context.lineTo(10, 0);
+		context.lineTo(19, 0);
+	} else if (outNumber == 2) {
+		context.moveTo(0, 0);
+		context.beginPath();
+		context.lineTo(0, 9);
+		context.lineTo(9, 0);
+		context.lineTo(0, 0);
+	} else if (outNumber == 3) {
+		context.moveTo(0, 19);
+		context.beginPath();
+		context.lineTo(0, 10);
+		context.lineTo(10, 19);
+		context.lineTo(0, 19);
+	}
+
+	context.lineWidth = 1;
+	context.strokeStyle = "#D00";
+	context.stroke();
+	context.closePath();
+	context.fillStyle = "#D00";
+	context.fill();
+}
+function getImageDataFromContext(context, imageSize, makeGreyscale) {
+	var imageData = context.getImageData(0, 0, imageSize, imageSize);
+		
+	if(makeGreyscale) {
+		for(var y = 0; y < imageData.height; y++){
+			for(var x = 0; x < imageData.width; x++){
+				var i = (y * 4) * imageData.width + x * 4;
+				var avg = (imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3;
+				imageData.data[i] = avg;
+				imageData.data[i + 1] = avg;
+				imageData.data[i + 2] = avg;
+				if(avg > 0) {
+					imageData.data[i + 3] = 100;
+				}
+			}
+		}
+	}
+
+	return imageData;
 }
