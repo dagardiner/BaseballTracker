@@ -18,7 +18,8 @@
    ],
  
   "web_accessible_resources": [
-    "logo/*"
+    "logos/*",
+    "numbers/*",
   ],
 
   "browser_action": {
