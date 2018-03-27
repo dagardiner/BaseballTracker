@@ -199,6 +199,7 @@ function updateData() {
 }
 function updateGameData(yyyy, mm, dd) {
 	var xmlHttp = new XMLHttpRequest();
+	xmlHttp.timeout = 3000;
 	var dateString = yyyy + "-" + mm + "-" + dd;
 	var scoreboardUrl = apiBaseUrl + "/api/v1/schedule?sportId=1&date=" + dateString + "&hydrate=linescore(runners),probablePitcher,team&language=en";
 	xmlHttp.open("GET", scoreboardUrl, true); // false for synchronous 
@@ -231,6 +232,7 @@ function updateGameData(yyyy, mm, dd) {
 }
 function updateGameMatchupData(gameUrl) {
 	var gameDetailRequest = new XMLHttpRequest();
+	gameDetailRequest.timeout = 3000;
 	gameDetailRequest.open("GET", gameUrl, true); // false for synchronous 
 	gameDetailRequest.onreadystatechange = function() {
 		if(gameDetailRequest.readyState == 4 && gameDetailRequest.status == 200) {
@@ -239,6 +241,7 @@ function updateGameMatchupData(gameUrl) {
 
 			var pitcherUrl = apiBaseUrl + "/api/v1/people/" + currentMatchup.pitcher;
 			var pitcherDetailRequest = new XMLHttpRequest();
+			pitcherDetailRequest.timeout = 3000;
 			pitcherDetailRequest.open("GET", pitcherUrl , true); // false for synchronous 
 			pitcherDetailRequest.onreadystatechange = function() {
 				if(pitcherDetailRequest.readyState == 4 && pitcherDetailRequest.status == 200) {
@@ -250,6 +253,7 @@ function updateGameMatchupData(gameUrl) {
 
 			var batterUrl = apiBaseUrl + "/api/v1/people/" + currentMatchup.batter;
 			var batterDetailRequest = new XMLHttpRequest();
+			batterDetailRequest.timeout = 3000;
 			batterDetailRequest.open("GET", batterUrl , true); // false for synchronous 
 			batterDetailRequest.onreadystatechange = function() {
 				if(batterDetailRequest.readyState == 4 && batterDetailRequest.status == 200) {
@@ -292,33 +296,32 @@ function updateDisplay() {
 	var gameDataForIcon = false;
 
 	if(currentGame) {
-		var game = currentGame;
-		currentGameId = game.gamePk;
+		currentGameId = currentGame.gamePk;
 
 		var myScore = 0;
 		var otherScore = 0;
 		var otherName = "other guys";
 		var probablePitcher = "the pitcher";
-		var venue = game.venue.name;
+		var venue = currentGame.venue.name;
 		var venueHomeAway = "at the ballpark";
 
-		if(game.teams.home.team.teamName == teamName) {
-			if(game.linescore) {
-				myScore = game.linescore.teams.home.runs;
-				otherScore = game.linescore.teams.away.runs;
+		if(currentGame.teams.home.team.teamName == teamName) {
+			if(currentGame.linescore) {
+				myScore = currentGame.linescore.teams.home.runs;
+				otherScore = currentGame.linescore.teams.away.runs;
 			}
-			otherName = game.teams.away.team.teamName;
-			if(game.teams.home.probablePitcher)
-				probablePitcher = game.teams.home.probablePitcher.fullName;
+			otherName = currentGame.teams.away.team.teamName;
+			if(currentGame.teams.home.probablePitcher)
+				probablePitcher = currentGame.teams.home.probablePitcher.fullName;
 			venueHomeAway = "at home";
-		} else if (game.teams.away.team.teamName == teamName) {
-			if(game.linescore) {
-				myScore = game.linescore.teams.away.runs;
-				otherScore = game.linescore.teams.home.runs;
+		} else if (currentGame.teams.away.team.teamName == teamName) {
+			if(currentGame.linescore) {
+				myScore = currentGame.linescore.teams.away.runs;
+				otherScore = currentGame.linescore.teams.home.runs;
 			}
-			otherName = game.teams.home.team.teamName;
-			if(game.teams.away.probablePitcher)
-				probablePitcher = game.teams.away.probablePitcher.fullName;
+			otherName = currentGame.teams.home.team.teamName;
+			if(currentGame.teams.away.probablePitcher)
+				probablePitcher = currentGame.teams.away.probablePitcher.fullName;
 			venueHomeAway = "away";
 		}
 
@@ -329,19 +332,59 @@ function updateDisplay() {
 		// Live - In Progress
 		// Final - Game Over
 		// Final - Final
-
-		switch(game.status.detailedState) {
+		var gameState = "Unknown";
+		switch(currentGame.status.detailedState) {
 			case "Scheduled":
-				var localGameTime = getTzAdjustedTime(game.gameDate);
+				gameState = "Scheduled";
+				break;
+			case "Postponed": //Theoretical - not yet seen
+			case "Delayed Start": //Theoretical - not yet seen
+				gameState = "Delayed";
+				break;
+			case "Pre-Game":
+			case "Warmup":
+				gameState = "Pre-Game";
+				break;
+			case "In Progress":
+			case "Manager Challenge": //Theoretical - not yet seen
+				gameState = "In Progress";
+				break;
+			case "Final":
+			case "Game Over":
+			case "Completed Early":
+				gameState = "Final";
+				break;
+			default:
+				console.log("Unknown Game State to handle: " + currentGame.status.abstractGameState + ", detailed state " + currentGame.status.detailedState + ".  Defaulting to Abstract Status mapping.");
+				switch(currentGame.status.abstractGameState) {
+					case "Preview":
+						gameState = "Scheduled";
+						break;
+					case "Live":
+						gameState = "In Progress";
+						break;
+					case "Final":
+						gameState = "Final";
+						break;
+					default:
+						console.log("Did not recognize Abstract Status either.");
+						gameState = "Scheduled";
+						break;
+				}
+				break;
+		}
+
+		switch(gameState) {
+			case "Scheduled":
+				var localGameTime = getTzAdjustedTime(currentGame.gameDate);
 				tagText = teamName + " vs " + otherName + " at " + venue + " will start at " + localGameTime + " " + moment.tz(timezone).format('z') + " with " + probablePitcher + " pitching";
 				badgeText = localGameTime;
 				stopGameTimers();
 				break;
-			case "Postponed": //Theoretical - not yet seen
-			case "Delayed Start": //Theoretical - not yet seen
-				console.log(game); //So I can tell what's available for this object when it occurs
-				if(game.status.detailedState != game.status.abstractGameState)
-					tagText = teamName + " vs " + otherName + " at " + venue + " is postponed because of " + game.status.detailedState;
+			case "Delayed": //Theoretical - not yet seen
+				console.log(currentGame); //So I can tell what's available for this object when it occurs
+				if(currentGame.status.detailedState != currentGame.status.abstractGameState)
+					tagText = teamName + " vs " + otherName + " at " + venue + " is postponed because of " + currentGame.status.detailedState;
 				else
 					tagText = teamName + " vs " + otherName + " at " + venue + " is postponed";
 				badgeText = "PPD";
@@ -349,15 +392,13 @@ function updateDisplay() {
 				startPreGameDataUpdateTimerIfNeeded();
 				break;
 			case "Pre-Game":
-			case "Warmup":
-				var localGameTime = getTzAdjustedTime(game.gameDate);
+				var localGameTime = getTzAdjustedTime(currentGame.gameDate);
 				tagText = teamName + " vs " + otherName + " at " + venue + " will start shortly (" + localGameTime + " " + moment.tz(timezone).format('z') + ") with " + probablePitcher + " pitching";
 				badgeText = localGameTime;
 
 				startPreGameDataUpdateTimerIfNeeded();
 				break;
 			case "In Progress":
-			case "Manager Challenge": //Theoretical - not yet seen
 				var scoreStatus;
 				if(Number(myScore) > Number(otherScore)) {
 					scoreStatus = "leading";
@@ -367,15 +408,15 @@ function updateDisplay() {
 					scoreStatus = "tied with";
 				}
 
-				var inningString = game.linescore.currentInningOrdinal;
-				var inninghalf = game.linescore.inningState.toLowerCase();
-				var currentInningHalfTeam = ((game.teams.away.team.teamName == teamName) && game.linescore.isTopInning) ? teamName : otherName
-				var balls = game.linescore.balls;
-				var strikes = game.linescore.strikes;
-				var outs = game.linescore.outs;
+				var inningString = currentGame.linescore.currentInningOrdinal;
+				var inninghalf = currentGame.linescore.inningState.toLowerCase();
+				var currentInningHalfTeam = ((currentGame.teams.away.team.teamName == teamName) && currentGame.linescore.isTopInning) ? teamName : otherName
+				var balls = currentGame.linescore.balls;
+				var strikes = currentGame.linescore.strikes;
+				var outs = currentGame.linescore.outs;
 
 				var bases = "nobody on base";
-				var basesLoaded = Object.getOwnPropertyNames(game.linescore.offense);
+				var basesLoaded = Object.getOwnPropertyNames(currentGame.linescore.offense);
 				if(basesLoaded.length > 0) {
 					bases = "runners on ";
 					bases += basesLoaded.join(", ").split('').reverse().join('').replace(',','dna ').split('').reverse().join('').replace("first", "1st").replace("second", "2nd").replace("third", "3rd");
@@ -394,20 +435,18 @@ function updateDisplay() {
 				badgeText = myScore + "-" + otherScore;
 
 				gameDataForIcon = { 
-					inning: game.linescore.currentInning,
-					isTop: game.linescore.isTopInning, 
-					isMiddle: (inninghalf == "middle" || inninghalf == "end"), 
-					outs: game.linescore.outs, 
-					firstBase: game.linescore.offense.first, 
-					secondBase: game.linescore.offense.second, 
-					thirdBase: game.linescore.offense.third 
+					inning: currentGame.linescore.currentInning,
+					isTop: currentGame.linescore.isTopInning, 
+					isMiddle: (inninghalf == "middle"), 
+					outs: currentGame.linescore.outs, 
+					firstBase: currentGame.linescore.offense.first, 
+					secondBase: currentGame.linescore.offense.second, 
+					thirdBase: currentGame.linescore.offense.third 
 				};
 
 				startInGameDataUpdateTimerIfNeeded();
 				break;
 			case "Final":
-			case "Game Over":
-				var gameResult;
 				if(Number(myScore) > Number(otherScore)) {
 					scoreStatus = "beat";
 					icon = icons["win"];
@@ -426,7 +465,7 @@ function updateDisplay() {
 				currentBatter = false;
 				break;
 			default:
-				console.log("Unknown Game State to handle: " + game.status.abstractGameState + ", detailed state " + game.detailedState)
+				console.log("Unknown Game State of " + gameState + "; no idea how we got here.")
 				tagText = false; //if it's an unknown state, don't change anything - this is a bug
 				badgeText = false;
 				break;
@@ -438,13 +477,8 @@ function updateDisplay() {
 		stopGameTimers();
 	}
 
-	if(tagText)
-		chrome.browserAction.setTitle({title: tagText });
-
-	if(badgeText !== false)
-		chrome.browserAction.setBadgeText({text: badgeText});
-
-	drawIcon(icon, currentGame, gameDataForIcon);
+	setIconText(tagText, badgeText);
+	drawIcon(icon, gameDataForIcon);
 }
 function getTzAdjustedTime(utcTimeString) {
 	var localTime = moment.tz(utcTimeString, "UTC").tz(timezone).format('hh:mm');
@@ -459,8 +493,16 @@ function sip(number) {
 	return "s";
 }
 
+function setIconText(tagText, badgeText) {
+	if(tagText)
+		chrome.browserAction.setTitle({title: tagText });
+
+	if(badgeText !== false)
+		chrome.browserAction.setBadgeText({text: badgeText});
+}
+
 // Logo draw logic
-function drawIcon(icon, useColorImage, gameData) {
+function drawIcon(icon, gameData) {
 	var context = iconCanvas.getContext('2d');
 
 	if(gameData && !simpleGameViewModeEnabled) {
@@ -473,9 +515,9 @@ function drawIcon(icon, useColorImage, gameData) {
 				drawOut(context, 2);
 			if(gameData.outs >= 3) 
 				drawOut(context, 3);
-
-	    	drawInningIndicator(context, gameData.isTop);
 		}
+
+    	drawInningIndicator(context, gameData.isTop);
 
 		drawInningNumber(context, gameData.inning, !gameData.isMiddle && gameData.outs >= 1);
 
@@ -483,7 +525,7 @@ function drawIcon(icon, useColorImage, gameData) {
 		drawBase(context, 9, 0, gameData.secondBase);
 		drawBase(context, 5, 4, gameData.thirdBase);
 
-		var imageData = getImageDataFromContext(context, 19, !useColorImage);
+		var imageData = getImageDataFromContext(context, 19, !currentGame);
     
     	chrome.browserAction.setIcon({
 		  imageData: imageData
@@ -492,7 +534,7 @@ function drawIcon(icon, useColorImage, gameData) {
     	context.clearRect(0, 0, icon.height, icon.width);
 		context.drawImage(icon, 0, 0);
 
-		var imageData = getImageDataFromContext(context, icon.height, !useColorImage);
+		var imageData = getImageDataFromContext(context, icon.height, !currentGame);
 
     	chrome.browserAction.setIcon({
 		  imageData: imageData
