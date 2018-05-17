@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "MLB Baseball Tracker",
   "short_name": "MlbBaseballTracker",
-  "version": "1.8",
+  "version": "2.6",
   "description": "Adds an icon with your selected MLB team's game information with real-time score and in-game data.",
   "offline_enabled": false,
   
