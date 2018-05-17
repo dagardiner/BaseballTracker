@@ -8,6 +8,7 @@ var timezone = "US/Central";
 var iconCanvas = document.createElement('canvas');
 var apiBaseUrl = "https://statsapi.mlb.com";
 var simpleGameViewModeEnabled = false;
+var homeAwayViewModeEnabled = false;
 
 var currentGameId = false;
 var currentGame = false;
@@ -38,19 +39,23 @@ chrome.browserAction.onClicked.addListener(function() {
 });
 
 // Startup and menu population
-chrome.storage.sync.get([ 'sportsTrackerTeamName','sportsTrackerTimeZone','sportsTrackerSimpleGameViewModeEnabled' ], function (result) {
+chrome.storage.sync.get([ 'sportsTrackerTeamName','sportsTrackerTimeZone','sportsTrackerSimpleGameViewModeEnabled', 'sportsTrackerHomeAwayViewModeEnabled' ], function (result) {
 	loadLogos();
 	loadNumbers();
+
+	if(result.sportsTrackerSimpleGameViewModeEnabled) {
+		simpleGameViewModeEnabled = result.sportsTrackerSimpleGameViewModeEnabled;
+	}
+	if(result.sportsTrackerHomeAwayViewModeEnabled) {
+		homeAwayViewModeEnabled = result.sportsTrackerHomeAwayViewModeEnabled;
+	}
+	addViewModeMenuOptions();
 
 	if(result.sportsTrackerTeamName) {
 		teamName = result.sportsTrackerTeamName;
 	}
 	addTeamSelectorMenuOptions();
 
-	if(result.sportsTrackerSimpleGameViewModeEnabled) {
-		simpleGameViewModeEnabled = result.sportsTrackerSimpleGameViewModeEnabled;
-	}
-	addSimpleGameViewModeEnabledMenuOption();
 	
 	if(result.sportsTrackerTimeZone) {
 		timezone = result.sportsTrackerTimeZone;
@@ -111,12 +116,60 @@ function saveSelectedTeam(newTeam) {
   chrome.storage.sync.set({'sportsTrackerTeamName': newTeam });
 	updateData();
 }
-function addSimpleGameViewModeEnabledMenuOption() {
-	chrome.contextMenus.create({
+function addViewModeMenuOptions() {
+	//chrome.contextMenus.create({type:'separator'});
+
+	var viewModeMenuItem = chrome.contextMenus.create({
 		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
-		"type":"separator"
+		"title":"Select Display Mode...",
+		"contexts":["browser_action"],
 	});
 
+	chrome.contextMenus.create({
+		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
+		"type":"radio",
+		"checked": !simpleGameViewModeEnabled && !homeAwayViewModeEnabled,
+		"title":"Full Game Updates",
+      	"parentId":viewModeMenuItem,
+		"contexts":["browser_action"],
+		"onclick":function(info, tab) {
+			homeAwayViewModeEnabled = false;
+			simpleGameViewModeEnabled = false;
+			chrome.storage.sync.set({'sportsTrackerSimpleGameViewModeEnabled': simpleGameViewModeEnabled, 'sportsTrackerHomeAwayViewModeEnabled': homeAwayViewModeEnabled });
+			updateData();
+		}
+	});
+	chrome.contextMenus.create({
+		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
+		"type":"radio",
+		"checked": simpleGameViewModeEnabled,
+		"title":"Simplified In-Game View",
+      	"parentId":viewModeMenuItem,
+		"contexts":["browser_action"],
+		"onclick":function(info, tab) {
+			homeAwayViewModeEnabled = false;
+			simpleGameViewModeEnabled = true;
+			chrome.storage.sync.set({'sportsTrackerSimpleGameViewModeEnabled': simpleGameViewModeEnabled, 'sportsTrackerHomeAwayViewModeEnabled': homeAwayViewModeEnabled });
+			updateData();
+		}
+	});
+	chrome.contextMenus.create({
+		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
+		"type":"radio",
+		"checked": homeAwayViewModeEnabled,
+		"title":"Home/Away Indicator",
+      	"parentId":viewModeMenuItem,
+		"contexts":["browser_action"],
+		"onclick":function(info, tab) {
+			stopGameTimers();
+			homeAwayViewModeEnabled = true;
+			simpleGameViewModeEnabled = false;
+			chrome.storage.sync.set({'sportsTrackerSimpleGameViewModeEnabled': simpleGameViewModeEnabled, 'sportsTrackerHomeAwayViewModeEnabled': homeAwayViewModeEnabled });
+			updateData();
+		}
+	});
+
+	/*
 	chrome.contextMenus.create({
 		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
 		"type":"checkbox",
@@ -129,11 +182,15 @@ function addSimpleGameViewModeEnabledMenuOption() {
 			updateData();
 		}
 	});
+	*/
 }
 function addTimeZoneMenuOptions() {
-	chrome.contextMenus.create({
+	//chrome.contextMenus.create({type:'separator'});
+
+	var timezoneMenuItem = chrome.contextMenus.create({
 		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
-		"type":"separator"
+		"title":"Select Time Zone...",
+		"contexts":["browser_action"],
 	});
 
 	chrome.contextMenus.create({
@@ -141,6 +198,7 @@ function addTimeZoneMenuOptions() {
 		"type":"radio",
 		"checked": timezone == "US/Pacific",
 		"title":"Pacific Time",
+      	"parentId":timezoneMenuItem,
 		"contexts":["browser_action"],
 		"onclick":function(info, tab) {
 			saveTimeZone("US/Pacific");
@@ -151,6 +209,7 @@ function addTimeZoneMenuOptions() {
 		"type":"radio",
 		"checked": timezone == "US/Mountain",
 		"title":"Mountain Time",
+      	"parentId":timezoneMenuItem,
 		"contexts":["browser_action"],
 		"onclick":function(info, tab) {
 			saveTimeZone("US/Mountain");
@@ -161,6 +220,7 @@ function addTimeZoneMenuOptions() {
 		"type":"radio",
 		"checked": timezone == "US/Central",
 		"title":"Central Time",
+      	"parentId":timezoneMenuItem,
 		"contexts":["browser_action"],
 		"onclick":function(info, tab) {
 			saveTimeZone("US/Central");
@@ -171,6 +231,7 @@ function addTimeZoneMenuOptions() {
 		"type":"radio",
 		"checked": timezone == "US/Eastern",
 		"title":"Eastern Time",
+      	"parentId":timezoneMenuItem,
 		"contexts":["browser_action"],
 		"onclick":function(info, tab) {
 			saveTimeZone("US/Eastern");
@@ -205,12 +266,18 @@ function updateGameData(yyyy, mm, dd) {
 	xmlHttp.open("GET", scoreboardUrl, true); // false for synchronous 
 	xmlHttp.onreadystatechange = function() {
 		if (xmlHttp.readyState == 4 && xmlHttp.status == 200) {
-			var gameInfo = JSON.parse(xmlHttp.responseText).dates[0].games;
+			var gamesForAllDates = JSON.parse(xmlHttp.responseText).dates;
+			var gameInfo = false;
 			var myGames;
+
+			if(gamesForAllDates && gamesForAllDates.length > 0) {
+				gameInfo = gamesForAllDates[0].games;
+			}
 
 			if(gameInfo) {
 				myGames = $.grep(gameInfo, function(game){ 
-					return ( game.teams.home.team.teamName == teamName || game.teams.away.team.teamName == teamName ) && game.gameDate.includes(dateString); 
+					var localStartDate = moment.tz(game.gameDate, "UTC").tz(timezone).format('YYYY-MM-DD');
+					return ( game.teams.home.team.teamName == teamName || game.teams.away.team.teamName == teamName ) && localStartDate.includes(dateString); 
 				});
 			}
 
@@ -222,7 +289,7 @@ function updateGameData(yyyy, mm, dd) {
 				currentGame = false;
 			}
 
-			if(currentGame && currentGame.status.abstractGameState == "Live")
+			if(currentGame && currentGame.status.abstractGameState == "Live" && !homeAwayViewModeEnabled)
 				updateGameMatchupData(apiBaseUrl + currentGame.link);
 
 			updateDisplay();
@@ -295,7 +362,18 @@ function updateDisplay() {
 	var icon = icons[teamName];
 	var gameDataForIcon = false;
 
-	if(currentGame) {
+	if(homeAwayViewModeEnabled) {
+		if(currentGame && currentGame.teams.home.team.teamName == teamName) {
+			var localGameTime = getTzAdjustedTime(currentGame.gameDate);
+			tagText = "The " + teamName + " have a home game against the " + currentGame.teams.away.team.teamName + " at " + localGameTime + " " + moment.tz(timezone).format('z');
+			badgeText = localGameTime;
+		}
+		else {
+			tagText = "The " + teamName +" are not playing at home today";
+			badgeText = "";
+		}
+	}
+	else if(currentGame) {
 		currentGameId = currentGame.gamePk;
 
 		var myScore = 0;
@@ -337,8 +415,11 @@ function updateDisplay() {
 			case "Scheduled":
 				gameState = "Scheduled";
 				break;
+			case "Cancelled":
+				gameState = "Cancelled";
+				break;
 			case "Postponed": //Theoretical - not yet seen
-			case "Delayed Start": //Theoretical - not yet seen
+			case "Delayed Start":
 				gameState = "Delayed";
 				break;
 			case "Pre-Game":
@@ -381,12 +462,20 @@ function updateDisplay() {
 				badgeText = localGameTime;
 				stopGameTimers();
 				break;
-			case "Delayed": //Theoretical - not yet seen
-				console.log(currentGame); //So I can tell what's available for this object when it occurs
-				if(currentGame.status.detailedState != currentGame.status.abstractGameState)
-					tagText = teamName + " vs " + otherName + " at " + venue + " is postponed because of " + currentGame.status.detailedState;
-				else
+			case "Cancelled":
+				tagText = teamName + " vs " + otherName + " at " + venue + " has been cancelled";
+				badgeText = "";
+				stopGameTimers();
+				break;
+			case "Delayed":
+				console.log(currentGame.status); //So I can tell what's available for this object when it occurs
+				if(currentGame.status.detailedState != currentGame.status.abstractGameState) {
+					tagText = teamName + " vs " + otherName + " at " + venue + " is " + currentGame.status.detailedState + " because of " + currentGame.status.reason;
+					if(currentGame.status.abstractGameState == "Final") tagText += " (Final)";
+				}
+				else {
 					tagText = teamName + " vs " + otherName + " at " + venue + " is postponed";
+				}
 				badgeText = "PPD";
 
 				startPreGameDataUpdateTimerIfNeeded();
@@ -410,7 +499,7 @@ function updateDisplay() {
 
 				var inningString = currentGame.linescore.currentInningOrdinal;
 				var inninghalf = currentGame.linescore.inningState.toLowerCase();
-				var currentInningHalfTeam = ((currentGame.teams.away.team.teamName == teamName) && currentGame.linescore.isTopInning) ? teamName : otherName
+				var currentInningHalfTeam = currentGame.linescore.isTopInning ? currentGame.teams.away.team.teamName : currentGame.teams.home.team.teamName
 				var balls = currentGame.linescore.balls;
 				var strikes = currentGame.linescore.strikes;
 				var outs = currentGame.linescore.outs;
@@ -470,7 +559,8 @@ function updateDisplay() {
 				badgeText = false;
 				break;
 		}
-	} else {
+	} 
+	else {
 		tagText = "No " + teamName + " game today";
 		badgeText = "";
 		currentGameId = false;
@@ -505,7 +595,17 @@ function setIconText(tagText, badgeText) {
 function drawIcon(icon, gameData) {
 	var context = iconCanvas.getContext('2d');
 
-	if(gameData && !simpleGameViewModeEnabled) {
+	if(homeAwayViewModeEnabled) {
+		context.clearRect(0, 0, icon.height, icon.width);
+		context.drawImage(icon, 0, 0);
+
+		var imageData = getImageDataFromContext(context, icon.height, !(currentGame && currentGame.teams.home.team.teamName == teamName));
+
+    	chrome.browserAction.setIcon({
+		  imageData: imageData
+		});
+	}
+	else if(gameData && !simpleGameViewModeEnabled) {
 		context.clearRect(0, 0, 19, 19);
 
     	if(!gameData.isMiddle) {
@@ -530,7 +630,8 @@ function drawIcon(icon, gameData) {
     	chrome.browserAction.setIcon({
 		  imageData: imageData
 		});
-    } else {
+    } 
+    else {
     	context.clearRect(0, 0, icon.height, icon.width);
 		context.drawImage(icon, 0, 0);
 
