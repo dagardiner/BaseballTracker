@@ -207,6 +207,17 @@ function addTimeZoneMenuOptions() {
 	chrome.contextMenus.create({
 		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
 		"type":"radio",
+		"checked": timezone == "US/Arizona",
+		"title":"Arizona Time",
+      	"parentId":timezoneMenuItem,
+		"contexts":["browser_action"],
+		"onclick":function(info, tab) {
+			saveTimeZone("US/Arizona");
+		}
+	});
+	chrome.contextMenus.create({
+		"documentUrlPatterns": [ window.location.protocol + "//" + window.location.hostname + "/*" ],
+		"type":"radio",
 		"checked": timezone == "US/Mountain",
 		"title":"Mountain Time",
       	"parentId":timezoneMenuItem,
